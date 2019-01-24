@@ -1,6 +1,9 @@
 use ffi;
 use foreign_types::ForeignTypeRef;
 use libc::{c_int, c_long, c_ulong};
+
+use std::error::Error;
+use std::fmt;
 use std::mem;
 use std::ptr;
 
@@ -25,6 +28,47 @@ bitflags! {
         const TRUST_OTHER = ffi::OCSP_TRUSTOTHER;
         const RESPID_KEY = ffi::OCSP_RESPID_KEY;
         const NO_TIME = ffi::OCSP_NOTIME;
+    }
+}
+
+#[derive(Debug)]
+pub enum OcspNonceCheckSuccessResult {
+    PresentAndEqual, // 1
+    Absent, // 2
+    PresentInResponseOnly, // 3
+}
+
+impl fmt::Display for OcspNonceCheckSuccessResult {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let message = match *self {
+            OcspNonceCheckSuccessResult::PresentAndEqual => "Nonces Present and Equal",
+            OcspNonceCheckSuccessResult::Absent => "Nonces Absent from Request and Response",
+            OcspNonceCheckSuccessResult::PresentInResponseOnly => "Nonce Present in Response Only",
+        };
+        write!(f, "{}", message)
+    }
+}
+
+#[derive(Debug)]
+pub enum OcspNonceCheckErrorResult {
+    PresentAndUnequal, // 0
+    PresentInRequestOnly, // -1
+    Unknown(ErrorStack), // any other return value
+}
+
+impl fmt::Display for OcspNonceCheckErrorResult {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            OcspNonceCheckErrorResult::PresentAndUnequal => write!(f, "Nonces Present and Unequal!"),
+            OcspNonceCheckErrorResult::PresentInRequestOnly => write!(f, "Nonce Present in Request Only!"),
+            OcspNonceCheckErrorResult::Unknown(ref err) => err.fmt(f),
+        }
+    }
+}
+
+impl Error for OcspNonceCheckErrorResult {
+    fn description(&self) -> &str {
+        "an error in OCSP nonce checking"
     }
 }
 
@@ -202,6 +246,24 @@ impl OcspBasicResponseRef {
             }
         }
     }
+
+    pub fn add_nonce(&mut self, val: Option<&[u8]>) -> Result<(), ErrorStack> {
+        unsafe {
+            let (ptr, len) = match val {
+                Some(slice) => (slice.as_ptr() as *mut _, slice.len() as c_int),
+                None => (ptr::null_mut(), 0),
+            };
+            cvt(ffi::OCSP_basic_add1_nonce(self.as_ptr(), ptr, len))?;
+            Ok(())
+        }
+    }
+
+    pub fn copy_nonce(&mut self, req: &OcspRequestRef) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::OCSP_copy_nonce(self.as_ptr(), req.as_ptr()))?;
+            Ok(())
+        }
+    }
 }
 
 foreign_type_and_impl_send_sync! {
@@ -340,6 +402,17 @@ impl OcspRequestRef {
             Ok(OcspOneReqRef::from_ptr_mut(ptr))
         }
     }
+
+    pub fn add_nonce(&mut self, val: Option<&[u8]>) -> Result<(), ErrorStack> {
+        unsafe {
+            let (ptr, len) = match val {
+                Some(slice) => (slice.as_ptr() as *mut _, slice.len() as c_int),
+                None => (ptr::null_mut(), 0),
+            };
+            cvt(ffi::OCSP_request_add1_nonce(self.as_ptr(), ptr, len))?;
+            Ok(())
+        }
+    }
 }
 
 foreign_type_and_impl_send_sync! {
@@ -348,4 +421,57 @@ foreign_type_and_impl_send_sync! {
 
     pub struct OcspOneReq;
     pub struct OcspOneReqRef;
+}
+
+pub fn check_nonce(req: &OcspRequestRef, bs: &OcspBasicResponseRef) -> Result<OcspNonceCheckSuccessResult, OcspNonceCheckErrorResult> {
+    unsafe {
+        match ffi::OCSP_check_nonce(req.as_ptr(), bs.as_ptr()) {
+            // good cases
+            1 => Ok(OcspNonceCheckSuccessResult::PresentAndEqual),
+            2 => Ok(OcspNonceCheckSuccessResult::Absent),
+            3 => Ok(OcspNonceCheckSuccessResult::PresentInResponseOnly),
+            // bad cases
+            0 => Err(OcspNonceCheckErrorResult::PresentAndUnequal),
+            -1 => Err(OcspNonceCheckErrorResult::PresentInRequestOnly),
+            _ => Err(OcspNonceCheckErrorResult::Unknown(ErrorStack::get())), //something else!
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hex::FromHex;
+
+    use super::*;
+    use hash::MessageDigest;
+    use x509::X509;
+
+    #[test]
+    fn test_create_ocsp_request() {
+        let subject = include_bytes!("../test/cert.pem");
+        let subject = X509::from_pem(subject).unwrap();
+        let issuer = include_bytes!("../test/root-ca.pem");
+        let issuer = X509::from_pem(issuer).unwrap();
+
+        let req_der = include_bytes!("../test/ocsp-req.der");
+        let req_nonce_der = include_bytes!("../test/ocsp-req-nonce.der");
+
+        let cert_id = OcspCertId::from_cert(
+            MessageDigest::sha1(),
+            &subject,
+            &issuer
+            ).unwrap();
+
+        let mut req = OcspRequest::new().unwrap();
+        req.add_id(cert_id).unwrap();
+
+        assert_eq!(&*req.to_der().unwrap(), req_der.as_ref());
+
+
+        let nonce = Vec::from_hex("4413A2C5019A7C3A384CDD8AB30E3816").unwrap();
+        req.add_nonce(Some(&nonce)).unwrap();
+
+        assert_eq!(&*req.to_der().unwrap(), req_nonce_der.as_ref());
+    }
+
 }
