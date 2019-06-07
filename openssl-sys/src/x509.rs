@@ -39,6 +39,67 @@ cfg_if! {
 
 cfg_if! {
     if #[cfg(ossl110)] {
+        pub enum X509_CRL {}
+    } else {
+        #[repr(C)]
+        pub struct X509_CRL {
+            pub crl: *mut X509_CRL_INFO,
+            sig_alg: *mut X509_ALGOR,
+            signature: *mut c_void,
+            references: c_int,
+            flags: c_int,
+            akid: *mut c_void,
+            idp: *mut c_void,
+            idp_flags: c_int,
+            idp_reasons: c_int,
+            crl_number: *mut ASN1_INTEGER,
+            base_crl_number: *mut ASN1_INTEGER,
+            sha1_hash: [c_uchar; 20],
+            issuers: *mut c_void,
+            meth: *const c_void,
+            meth_data: *mut c_void,
+        }
+    }
+}
+
+cfg_if! {
+    if #[cfg(ossl110)] {
+        pub enum X509_CRL_INFO {}
+    } else {
+        #[repr(C)]
+        pub struct X509_CRL_INFO {
+            version: *mut ASN1_INTEGER,
+            sig_alg: *mut X509_ALGOR,
+            pub issuer: *mut X509_NAME,
+            pub lastUpdate: *mut ASN1_TIME,
+            pub nextUpdate: *mut ASN1_TIME,
+            pub revoked: *mut stack_st_X509_REVOKED,
+            extensions: *mut stack_st_X509_EXTENSION,
+            enc: ASN1_ENCODING,
+        }
+    }
+}
+
+cfg_if! {
+    if #[cfg(ossl110)] {
+        pub enum X509_REVOKED {}
+    } else {
+        #[repr(C)]
+        pub struct X509_REVOKED {
+            pub serialNumber: *mut ASN1_INTEGER,
+            pub revocationDate: *mut ASN1_TIME,
+            extensions: *mut stack_st_X509_EXTENSION,
+            issuer: *mut stack_st_GENERAL_NAME,
+            reason: c_int,
+            sequence: c_int,
+        }
+    }
+}
+
+stack!(stack_st_X509_REVOKED);
+
+cfg_if! {
+    if #[cfg(ossl110)] {
         pub enum X509_REQ {}
     } else {
         #[repr(C)]
@@ -137,6 +198,23 @@ extern "C" {
     pub fn X509_to_X509_REQ(x: *mut X509, pkey: *mut EVP_PKEY, md: *const EVP_MD) -> *mut X509_REQ;
 
     pub fn X509_ALGOR_free(x: *mut X509_ALGOR);
+
+    pub fn X509_REVOKED_new() -> *mut X509_REVOKED;
+    pub fn X509_REVOKED_free(x: *mut X509_REVOKED);
+    pub fn d2i_X509_REVOKED(
+        a: *mut *mut X509_REVOKED,
+        pp: *mut *const c_uchar,
+        length: c_long,
+    ) -> *mut X509_REVOKED;
+    pub fn i2d_X509_REVOKED(x: *mut X509_REVOKED, buf: *mut *mut u8) -> c_int;
+    pub fn X509_CRL_new() -> *mut X509_CRL;
+    pub fn X509_CRL_free(x: *mut X509_CRL);
+    pub fn d2i_X509_CRL(
+        a: *mut *mut X509_CRL,
+        pp: *mut *const c_uchar,
+        length: c_long,
+    ) -> *mut X509_CRL;
+    pub fn i2d_X509_CRL(x: *mut X509_CRL, buf: *mut *mut u8) -> c_int;
 
     pub fn X509_REQ_new() -> *mut X509_REQ;
     pub fn X509_REQ_free(x: *mut X509_REQ);
@@ -248,6 +326,32 @@ extern "C" {
     pub fn X509_getm_notAfter(x: *const X509) -> *mut ASN1_TIME;
     #[cfg(any(ossl110, libressl273))]
     pub fn X509_up_ref(x: *mut X509) -> c_int;
+
+    #[cfg(ossl110)]
+    pub fn X509_REVOKED_get0_serialNumber(req: *const X509_REVOKED) -> *const ASN1_INTEGER;
+    #[cfg(ossl110)]
+    pub fn X509_REVOKED_get0_revocationDate(req: *const X509_REVOKED) -> *const ASN1_TIME;
+
+    pub fn X509_CRL_verify(crl: *mut X509_CRL, pkey: *mut EVP_PKEY) -> c_int;
+    pub fn X509_CRL_get0_by_cert(
+        x: *mut X509_CRL,
+        ret: *mut *mut X509_REVOKED,
+        cert: *mut X509,
+    ) -> c_int;
+    pub fn X509_CRL_get0_by_serial(
+        x: *mut X509_CRL,
+        ret: *mut *mut X509_REVOKED,
+        serial: *mut ASN1_INTEGER,
+    ) -> c_int;
+
+    #[cfg(ossl110)]
+    pub fn X509_CRL_get_REVOKED(crl: *mut X509_CRL) -> *mut stack_st_X509_REVOKED;
+    #[cfg(ossl110)]
+    pub fn X509_CRL_get0_nextUpdate(x: *const X509_CRL) -> *const ASN1_TIME;
+    #[cfg(ossl110)]
+    pub fn X509_CRL_get0_lastUpdate(x: *const X509_CRL) -> *const ASN1_TIME;
+    #[cfg(ossl110)]
+    pub fn X509_CRL_get_issuer(x: *const X509_CRL) -> *mut X509_NAME;
 
     #[cfg(ossl110)]
     pub fn X509_get0_extensions(req: *const ::X509) -> *const stack_st_X509_EXTENSION;

@@ -12,7 +12,7 @@ use x509::extension::{
     SubjectKeyIdentifier,
 };
 use x509::store::X509StoreBuilder;
-use x509::{KeyUsageFlags, X509Name, X509Req, X509StoreContext, X509VerifyResult, X509};
+use x509::{KeyUsageFlags, CrlStatus, X509Crl, X509Name, X509Req, X509StoreContext, X509VerifyResult, X509};
 
 fn pkey() -> PKey<Private> {
     let rsa = Rsa::generate(2048).unwrap();
@@ -481,4 +481,28 @@ fn test_verify_fails() {
     assert!(!context
         .init(&store, &cert, &chain, |c| c.verify_cert())
         .unwrap());
+}
+
+#[test]
+fn test_load_crl() {
+    let ca = include_bytes!("../../test/crl-ca.crt");
+    let ca = X509::from_pem(ca).unwrap();
+
+    let crl = include_bytes!("../../test/test.crl");
+    let crl = X509Crl::from_der(crl).unwrap();
+    assert!(crl.verify(&ca.public_key().unwrap()).unwrap());
+
+    let cert = include_bytes!("../../test/subca.crt");
+    let cert = X509::from_pem(cert).unwrap();
+
+    let revoked = match crl.get_by_cert(&cert) {
+        CrlStatus::Revoked(revoked) => revoked,
+        _ => panic!("cert should be revoked"),
+    };
+
+    assert_eq!(
+        revoked.serial_number().to_bn().unwrap(),
+        cert.serial_number().to_bn().unwrap(),
+        "revoked and cert serial numbers should match"
+    );
 }

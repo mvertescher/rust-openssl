@@ -339,7 +339,6 @@ cfg_if! {
         }
     }
 }
-pub enum X509_CRL {}
 pub enum X509_NAME {}
 pub enum X509_STORE {}
 pub enum X509_STORE_CTX {}
